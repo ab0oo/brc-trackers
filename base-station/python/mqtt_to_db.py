@@ -10,7 +10,6 @@
 # Heavily modified by John Gorkos, AB0OO for BRC Tracker project
 
 
-import http.client
 import json
 import paho.mqtt.client as mqtt
 import psycopg2
@@ -20,7 +19,7 @@ import sys
 dbcon  = None
 dbhost = "localhost"
 dbport = 5432
-dbname = "locations"
+dbname = "gis"
 dbuser = "www-data"
 dbpass = "farkelfoo"
 #  doc["rxId"] = chipId;
@@ -37,7 +36,26 @@ db_ins_q = """ INSERT INTO locations  \
         ("receiver","transmitter","rssi","lat","lon","alt","vel","cog") \
                VALUES ( %s, %s, %s, %s, %s, %s, %s, %s )"""
 
-# create table locations( receiver varchar(10), transmitter char(8), toi timestamp with time zone default now(), lat float, lon float, alt float, cog float, vel float, rssi int );
+# these DB statements assume you have initialized postgis in your PG database
+# create table locations( receiver varchar(10), transmitter char(8), toi timestamp with time zone default now(), lat float, lon float, alt float, cog float, vel float, rssi int, geom geometry );
+#CREATE OR REPLACE FUNCTION update_geom()
+#  RETURNS trigger AS
+#$BODY$
+#BEGIN
+#   NEW.geom = ST_SetSRID(ST_MakePoint(NEW.lon, NEW.lat), 4326);
+#
+#   RETURN NEW;
+#END;
+#$BODY$
+#LANGUAGE plpgsql VOLATILE -- Says the function is implemented in the plpgsql language; VOLATILE says the function has side effects.
+#COST 100; -- Estimated execution cost of the function.
+#
+#CREATE TRIGGER update_geom_after_insert
+#  BEFORE INSERT
+#  ON my_tbl
+#  FOR EACH ROW
+#  EXECUTE PROCEDURE update_geom();
+# recieved MQTT JSON data looks like this
 # {"receiver": "HOUSE", "toi": 1660743982.2000704, "rssi": -74, "lat": 38.66174532586382, "lon": -121.0834755306805, "source": "6edf7c", "alt": 0, "vel": 0.0, "cog": 268}
 # Received message 'b'{"receiver": "HOUSE", "toi": 1660744103.117748, "rssi": -76, "lat": 38.66175845177278, "lon": -121.08351228322562, "source": "6edf7c", "alt": 0, "vel": 0.0, "cog": 268}'' 
 # ' INSERT INTO locations("receiver","transmitter","lat","lon","alt","cog","vel","rssi") VALUES ( \'HOUSE\', \'6edf7c\',  -76, 38.66175845177278,  -121.08351228322562, 0, 0.0, 268 )'
