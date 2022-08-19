@@ -1,41 +1,35 @@
-# SPDX-FileCopyrightText: 2018 Brent Rubell for Adafruit Industries
-#
+# SPDX-FileCopyrightText: 2021 ladyada for Adafruit Industries
 # SPDX-License-Identifier: MIT
 
-"""
-Example for using the RFM9x Radio with Raspberry Pi.
-
-Learn Guide: https://learn.adafruit.com/lora-and-lorawan-for-raspberry-pi
-Author: Brent Rubell for Adafruit Industries
-"""
-# Import Python System Libraries
+# Example using Interrupts to send a message and then wait indefinitely for messages
+# to be received. Interrupts are used only for receive. sending is done with polling.
+# This example is for systems that support interrupts like the Raspberry Pi with "blinka"
+# CircuitPython does not support interrupts so it will not work on  Circutpython boards
+# Author: Tony DiCola, Jerry Needell
 import time
-# Import Blinka Libraries
-import busio
-from digitalio import DigitalInOut, Direction, Pull
 import board
+import busio
+import digitalio
+from digitalio import DigitalInOut, Direction, Pull
 # Import the SSD1306 module.
 import adafruit_ssd1306
-# Import RFM9x
+import RPi.GPIO as io
 import adafruit_rfm9x
+# this is all for decoding and sending packets to MQTT
 import aprslib
 import logging
 import json
 import paho.mqtt.client as mqtt
 import base91
 
-
 broker = "localhost"
 mqttPort = 1883
 ka_interval = 45
 topic = "brc/trackers"
-
 # logging.basicConfig(level=logging.DEBUG) # enable this to see APRS parser debugging
-
-rxName = "HOUSE"
+rxName = "5:00&A"
 mqttUser = "john"
 mqttPass = "password5678"
-
 
 client=mqtt.Client(rxName)
 client.username_pw_set(mqttUser,mqttPass)
@@ -54,76 +48,108 @@ display.show()
 width = display.width
 height = display.height
 
-# Configure LoRa Radio
-CS = DigitalInOut(board.CE1)
-RESET = DigitalInOut(board.D25)
+# setup interrupt callback function
+def rfm9x_callback(rfm9x_irq):
+    global packet_received  # pylint: disable=global-statement
+    global lastPacket
+    global lastCog
+    global lastVel
+    global lastAlt
+    print("IRQ detected ", rfm9x_irq, rfm9x.rx_done)
+    # check to see if this was a rx interrupt - ignore tx
+    if rfm9x.rx_done:
+        packet = rfm9x.receive(timeout=None)
+        if packet is not None:
+            packet_received = True
+            # Received a packet!
+            # Print out the raw bytes of the packet:
+            uplink = {}
+            uplink["receiver"] = rxName
+            uplink["toi"] = time.time()
+            uplink['rssi'] = rfm9x.last_rssi
+            display.fill(0)
+            prev_packet = packet
+            packet_text = str(prev_packet, "utf-8")
+            display.text('RX: ', 0, 0, 1)
+            display.text(packet_text, 25, 0, 1)
+            display.show()
+            try:
+                aprs_packet = aprslib.parse(packet_text)
+                uplink["lat"] = aprs_packet["latitude"]
+                uplink["lon"] = aprs_packet["longitude"]
+                uplink['source'] = aprs_packet['from']
+                if 'altitude' in aprs_packet:
+                    uplink['alt'] = aprs_packet['altitude']
+                    lastAlt = aprs_packet['altitude']
+                else:
+                    uplink['alt'] = lastAlt
+                if 'speed' in aprs_packet:
+                    uplink["vel"] = aprs_packet["speed"]
+                    uplink["cog"] = aprs_packet["course"]
+                    lastCog = aprs_packet["course"]
+                    lastVel = aprs_packet["speed"]
+                else:
+                    uplink["vel"] = lastVel
+                    uplink["cog"] = lastCog
+            except Exception as ex:
+                print("Unknown packet format:  ", ex)
+                traceback.print_exception()
+            print(json.dumps(uplink))
+            client.publish(topic, payload=json.dumps(uplink), qos=0, retain=False)
+            lastPacket=time.time();
+            time.sleep(.1)
+
+# Define radio parameters.
+RADIO_FREQ_MHZ = 913.5  # Frequency of the radio in Mhz. Must match your
+# module! Can be a value like 915.0, 433.0, etc.
+
+# Define pins connected to the chip, use these if wiring up the breakout according to the guide:
+CS = digitalio.DigitalInOut(board.CE1)
+RESET = digitalio.DigitalInOut(board.D25)
+
+# Initialize SPI bus.
 spi = busio.SPI(board.SCK, MOSI=board.MOSI, MISO=board.MISO)
-rfm9x = adafruit_rfm9x.RFM9x(spi, CS, RESET, 913.5, preamble_length=16, baudrate=1000000, crc=False)
-rfm9x.tx_power = 23
+
+# Initialze RFM radio
+#rfm9x = adafruit_rfm9x.RFM9x(spi, CS, RESET, RADIO_FREQ_MHZ)
+rfm9x = adafruit_rfm9x.RFM9x(spi, CS, RESET, 913.5, preamble_length=8, baudrate=1000000, crc=False)
+
+# Note that the radio is configured in LoRa mode so you can't control sync
+# word, encryption, frequency deviation, or other settings!
+
+# You can however adjust the transmit power (in dB).  The default is 13 dB but
+# high power radios like the RFM95 can go up to 23 dB:
+rfm9x.tx_power = 13
 rfm9x.coding_rate = 5
 rfm9x.signal_bandwidth = 125E3
 rfm9x.spreading_factor = 7
-rfm9x.preamble_length = 16
+rfm9x.preamble_length = 8
 rfm9x.destination = 0x13;
-prev_packet = None
-print("Starting now.")
 
+# configure the interrupt pin and event handling.
+RFM9X_G0 = 22
+io.setmode(io.BCM)
+io.setup(RFM9X_G0, io.IN, pull_up_down=io.PUD_DOWN)  # activate input
+io.add_event_detect(RFM9X_G0, io.RISING)
+io.add_event_callback(RFM9X_G0, rfm9x_callback)
+
+packet_received = False
 lastAlt=0
 lastCog=0
 lastVel=0
 lastPacket = time.time()
 
+# this seems to be necessary to enable reception.  Beats me...
+rfm9x.send(bytes("Hello world!\r\n", "utf-8"), keep_listening=True)
+print("Sent Hello World message!")
+
+# Wait to receive packets.  Note that this library can't receive data at a fast
+# rate, in fact it can only receive and process one 252 byte packet at a time.
+# This means you should only use this for low bandwidth scenarios, like sending
+# and receiving a single message at a time.
+print("Waiting for packets...")
 while True:
-    packet = None
-    # draw a box to clear the image
-    display.fill(0)
-    display.text('RasPi LoRa', 35, 0, 1)
-
-    uplink = {}
-    uplink["receiver"] = rxName
-    # check for packet rx
-    packet = rfm9x.receive(keep_listening=True,with_header=True,with_ack=False,timeout=None)
-    uplink["toi"] = time.time()
-    uplink['rssi'] = rfm9x.last_rssi
-    if packet is None:
-        display.show()
-        timeSince = round(time.time() - lastPacket);
-        text = f'{timeSince}s since last PKT -'
-        display.text(text, 15, 20, 1)
-        print(text, end='\r');
-    else:
-        # Display the packet text and rssi
-        print(packet)
-        display.fill(0)
-        prev_packet = packet
-        packet_text = str(prev_packet, "utf-8")
-        display.text('RX: ', 0, 0, 1)
-        display.text(packet_text, 25, 0, 1)
-        try:
-            aprs_packet = aprslib.parse(packet_text)
-            uplink["lat"] = aprs_packet["latitude"]
-            uplink["lon"] = aprs_packet["longitude"]
-            uplink['source'] = aprs_packet['from']
-            if 'altitude' in aprs_packet:
-                uplink['alt'] = aprs_packet['altitude']
-                lastAlt = aprs_packet['altitude']
-            else:
-                uplink['alt'] = lastAlt
-            if 'speed' in aprs_packet:
-                uplink["vel"] = aprs_packet["speed"]
-                uplink["cog"] = aprs_packet["course"]
-                lastCog = aprs_packet["course"]
-                lastVel = aprs_packet["speed"]
-            else:
-                uplink["vel"] = lastVel
-                uplink["cog"] = lastCog
-        except Exception as ex:
-            print("Unknown packet format:  ", ex)
-            traceback.print_exception()
-        print(json.dumps(uplink))
-        client.publish(topic, payload=json.dumps(uplink), qos=0, retain=False)
-        lastPacket=time.time();
-        time.sleep(.5)
-
-    display.show()
     time.sleep(0.1)
+    if packet_received:
+        print("received message!")
+        packet_received = False
