@@ -16,7 +16,12 @@ RPi.GPIO                         0.7.0
 pip is your friend for installing libraries, until I write a requirements.txt file.
 
 The systemd .service file can be copied to the systemd config directory, so the lora GW will run at system startup:
-sudo cp python/lora_mqtt_bridge.service /etc/systemd/system
+sudo cp lora_mqtt_bridge.service /etc/systemd/system
 sudo systemctl daemon-reload
 sudo systemctl enable lora_mqtt_bridge.service
 sudo systemctl start lora_mqtt_bridge.service
+
+sudo cp mqtt_db_bridge.service /etc/systemd/system
+sudo systemctl daemon-reload
+sudo systemctl enable mqtt_db_bridge_service
+sudo systemctl start mqtt_db_bridge_service

@@ -5,6 +5,8 @@ After=multi-user.target
 [Service]
 Type=simple
 Restart=always
+StandardOutput=append:/tmp/lora_mqtt_gw.log
+StandardError=append:/tmp/lora_mqtt_gw.err
 ExecStart=/usr/bin/python3 /home/pi/lora_mqtt_gw.py
 
 [Install]

@@ -55,7 +55,6 @@ def rfm9x_callback(rfm9x_irq):
     global lastCog
     global lastVel
     global lastAlt
-    print("IRQ detected ", rfm9x_irq, rfm9x.rx_done)
     # check to see if this was a rx interrupt - ignore tx
     if rfm9x.rx_done:
         packet = rfm9x.receive(timeout=None)
@@ -151,5 +150,5 @@ print("Waiting for packets...")
 while True:
     time.sleep(0.1)
     if packet_received:
-        print("received message!")
+        # the message is processed in the callback, and we reset for another go-round
         packet_received = False

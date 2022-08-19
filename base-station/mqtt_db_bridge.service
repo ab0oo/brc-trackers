@@ -1,0 +1,13 @@
+[Unit]
+Description=MQTT-DB Gateway
+After=multi-user.target
+
+[Service]
+Type=simple
+Restart=always
+ExecStart=/usr/bin/python3 /home/pi/mqtt_to_db.py
+StandardOutput=append:/tmp/mqtt_to_db.log
+StandardError=append:/mqtt_to_db.err
+
+[Install]
+WantedBy=multi-user.target
