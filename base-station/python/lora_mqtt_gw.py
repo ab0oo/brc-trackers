@@ -20,6 +20,7 @@ import aprslib
 import logging
 import json
 import paho.mqtt.client as mqtt
+import paho.mqtt.publish as publish
 import base91
 
 broker = "localhost"
@@ -28,6 +29,7 @@ ka_interval = 45
 topic = "brc/trackers"
 # logging.basicConfig(level=logging.DEBUG) # enable this to see APRS parser debugging
 rxName = "5:00&A"
+mqttAuth = {'username':"john", 'password':"password5678"}
 mqttUser = "john"
 mqttPass = "password5678"
 
@@ -57,7 +59,7 @@ def rfm9x_callback(rfm9x_irq):
     global lastAlt
     # check to see if this was a rx interrupt - ignore tx
     if rfm9x.rx_done:
-        packet = rfm9x.receive(timeout=None)
+        packet = rfm9x.receive(with_header=True, timeout=None)
         if packet is not None:
             packet_received = True
             # Received a packet!
@@ -66,13 +68,14 @@ def rfm9x_callback(rfm9x_irq):
             uplink["receiver"] = rxName
             uplink["toi"] = time.time()
             uplink['rssi'] = rfm9x.last_rssi
-            display.fill(0)
-            prev_packet = packet
-            packet_text = str(prev_packet, "utf-8")
-            display.text('RX: ', 0, 0, 1)
-            display.text(packet_text, 25, 0, 1)
-            display.show()
             try:
+                display.fill(0)
+                prev_packet = packet
+                packet_text = str(prev_packet, "utf-8")
+                display.fill(0)
+                display.text('RX: ', 0, 0, 1)
+                display.text(packet_text, 25, 0, 1)
+                display.show()
                 aprs_packet = aprslib.parse(packet_text)
                 uplink["lat"] = aprs_packet["latitude"]
                 uplink["lon"] = aprs_packet["longitude"]
@@ -90,11 +93,11 @@ def rfm9x_callback(rfm9x_irq):
                 else:
                     uplink["vel"] = lastVel
                     uplink["cog"] = lastCog
+                print(json.dumps(uplink))
+                publish.single(topic, payload=json.dumps(uplink), hostname=broker, client_id=rxName, auth=mqttAuth, port=mqttPort)
+                #client.publish(topic, payload=json.dumps(uplink), qos=0, retain=False)
             except Exception as ex:
                 print("Unknown packet format:  ", ex)
-                traceback.print_exception()
-            print(json.dumps(uplink))
-            client.publish(topic, payload=json.dumps(uplink), qos=0, retain=False)
             lastPacket=time.time();
             time.sleep(.1)
 
@@ -146,9 +149,16 @@ print("Sent Hello World message!")
 # rate, in fact it can only receive and process one 252 byte packet at a time.
 # This means you should only use this for low bandwidth scenarios, like sending
 # and receiving a single message at a time.
+lastPacketTime = int(round(time.time()));
 print("Waiting for packets...")
 while True:
-    time.sleep(0.1)
+    now = int(round(time.time()))
+    secondsSincePacket = now - lastPacketTime
+    display.fill(0)
+    display.text(f"{secondsSincePacket}s since last RX",25, 0, 1)
+    display.show()
+    time.sleep(0.5)
     if packet_received:
         # the message is processed in the callback, and we reset for another go-round
         packet_received = False
+        lastPacketTime = now;
